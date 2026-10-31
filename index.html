@@ -1,0 +1,76 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Смотрим вдвоём</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+<style>
+:root{--bg:#0d0f14;--card:#171a22;--line:#2a2f3c;--tx:#e8eaf0;--mut:#8a90a2;--ac:#7c5cff;--ac2:#ff5c8a;--ok:#2ecc71}
+*{box-sizing:border-box}body{background:radial-gradient(1200px 600px at 10% -10%,#2a1f55 0,transparent 60%),radial-gradient(900px 500px at 110% 0,#4a1f35 0,transparent 55%),var(--bg);color:var(--tx);font:15px/1.4 system-ui,Segoe UI,sans-serif;margin:0;min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+h1{margin:4px 0 14px;font-size:24px;background:linear-gradient(90deg,var(--ac),var(--ac2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.card{background:color-mix(in srgb,var(--card) 88%,transparent);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px;backdrop-filter:blur(6px)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.row+.row{margin-top:10px}
+.lbl{color:var(--mut);font-size:13px;min-width:70px}
+input,select,button{font:inherit;color:var(--tx);background:#0f1218;border:1px solid var(--line);border-radius:9px;padding:8px 12px}
+input[type=file]{padding:5px;max-width:260px}input::file-selector-button{background:#232838;color:var(--tx);border:0;border-radius:6px;padding:5px 10px;margin-right:8px;cursor:pointer}
+input:focus,select:focus{outline:2px solid var(--ac);outline-offset:-1px}
+button{cursor:pointer;background:linear-gradient(135deg,var(--ac),#5a3fd6);border:0;font-weight:600;transition:filter .15s,transform .1s}button:hover{filter:brightness(1.15)}button:active{transform:scale(.97)}
+button.alt{background:#232838}button.hot{background:linear-gradient(135deg,var(--ac2),#d63f6c)}
+.grow{flex:1;min-width:180px}
+#st{margin-left:auto;padding:5px 12px;border-radius:99px;background:#232838;color:var(--mut);font-size:13px}#st.on{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+.player{border-radius:14px;overflow:hidden;background:#000;border:1px solid var(--line);box-shadow:0 20px 60px #0008}
+video{width:100%;display:block;max-height:78vh;background:#000}
+.hint{color:var(--mut);font-size:12px;margin-top:8px}
+</style></head><body><div class="wrap">
+<h1>🎬 Смотрим вдвоём</h1>
+<div class="card"><div class="row">
+ <button id="host">Создать комнату</button><input id="rid" class="grow" placeholder="ID комнаты"><button id="join" class="alt">Войти</button><button id="copy" class="alt" title="Скопировать ссылку-приглашение">🔗</button><span id="st">не подключено</span>
+</div></div>
+<div class="card">
+ <div class="row"><span class="lbl">Видео</span><input type="file" id="vf" accept="video/*,.mkv"><input id="vu" class="grow" placeholder="или ссылка mp4 / webm / m3u8"><button id="lu" class="alt">Открыть</button></div>
+ <div class="row"><span class="lbl">Озвучка</span><input type="file" id="af" accept="audio/*,.mka" title="Отдельный файл озвучки"><select id="at" hidden></select><button id="cast" class="hot" style="margin-left:auto">📡 Транслировать собеседнику</button></div>
+</div>
+<div class="player"><video id="v" controls playsinline></video></div><audio id="a"></audio>
+<div class="hint">Видео открывает один — и транслирует. Или оба открывают один и тот же файл — синхронизируется пауза, play и перемотка.</div>
+</div>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),v=$('v'),a=$('a');let peer,conn,hls,lead=false,lock=0,lat=0;
+const live=()=>!!v.srcObject,st=(t,on)=>{$('st').textContent=t;$('st').className=on?'on':''};
+// --- синхронизация ---
+// lead = создатель комнаты, раз в 2с шлёт эталон; задержка сети меряется пингом и компенсируется
+const tx=m=>conn&&conn.open&&conn.send(m),state=()=>({k:'s',t:live()?null:v.currentTime,p:!v.paused});
+function apply(d){lock=Date.now()+600;
+ if(d.t!=null&&!live()){const t=d.t+(d.p?lat:0),dt=t-v.currentTime;
+  if(d.hb){if(Math.abs(dt)>1)v.currentTime=t;else v.playbackRate=Math.abs(dt)<.12?1:dt>0?1.06:.94} // мягкая подгонка
+  else if(Math.abs(dt)>.3)v.currentTime=t}
+ if(d.p&&v.paused)v.play().catch(()=>{});else if(!d.p&&!v.paused)v.pause()}
+function setConn(c){conn=c;
+ c.on('open',()=>{st('вдвоём ✔',1);if(lead)tx(state())});
+ c.on('data',d=>{if(d.k=='ping')tx({k:'pong',ts:d.ts});else if(d.k=='pong')lat=lat?lat*.7+(Date.now()-d.ts)/2000*.3:(Date.now()-d.ts)/2000;else if(d.k=='s')apply(d)});
+ c.on('close',()=>st('собеседник вышел'))}
+const send=()=>{if(Date.now()>lock)tx(state())};
+['play','pause','seeked'].forEach(e=>v.addEventListener(e,send));
+setInterval(()=>{tx({k:'ping',ts:Date.now()});if(lead&&!v.paused&&!live())tx({...state(),hb:1})},2000);
+function mkPeer(id){peer=new Peer(id);peer.on('connection',setConn);peer.on('error',e=>st('ошибка: '+e.type));
+ peer.on('call',c=>{c.answer();c.on('stream',s=>{if(hls)hls.destroy(),hls=null;v.removeAttribute('src');v.srcObject=s;v.muted=false;v.playbackRate=1;v.play().catch(()=>{})})});return peer}
+$('host').onclick=()=>{lead=true;mkPeer().on('open',id=>{$('rid').value=id;history.replaceState(0,'','#'+id);st('ждём собеседника…')})};
+$('join').onclick=()=>{lead=false;mkPeer().on('open',()=>setConn(peer.connect($('rid').value.trim())))};
+$('copy').onclick=()=>navigator.clipboard.writeText(location.href.split('#')[0]+'#'+$('rid').value).then(()=>st('ссылка скопирована',1));
+if(location.hash)$('rid').value=location.hash.slice(1);
+// --- трансляция своего видео (+внешней озвучки) собеседнику ---
+$('cast').onclick=()=>{if(!conn||!conn.open)return alert('Сначала подключитесь');
+ const cap=el=>el.captureStream?el.captureStream():el.mozCaptureStream();
+ try{const s=cap(v);if(a.src){s.getAudioTracks().forEach(t=>s.removeTrack(t));cap(a).getAudioTracks().forEach(t=>s.addTrack(t))}
+  peer.call(conn.peer,s);st('транслирую 📡',1)}catch(e){alert('Не удалось захватить видео (сайт-источник может запрещать это): '+e.message)}};
+// --- видео, m3u8, встроенные дорожки ---
+function load(src){if(hls)hls.destroy(),hls=null;v.srcObject=null;
+ if(/\.m3u8/i.test(src)&&window.Hls&&Hls.isSupported()){hls=new Hls();hls.loadSource(src);hls.attachMedia(v)}else v.src=src;
+ v.onloadedmetadata=()=>{const t=v.audioTracks,s=$('at');if(!t||t.length<2)return s.hidden=true;
+ s.innerHTML=[...t].map((x,i)=>`<option value="${i}">${x.label||x.language||'Дорожка '+(i+1)}</option>`).join('');s.hidden=false;
+ s.onchange=()=>[...t].forEach((x,i)=>x.enabled=i==s.value)}}
+$('vf').onchange=e=>{v.removeAttribute('crossorigin');load(URL.createObjectURL(e.target.files[0]))};
+$('lu').onclick=()=>load($('vu').value.trim());
+// --- внешняя озвучка, привязанная к видео ---
+$('af').onchange=e=>{a.src=URL.createObjectURL(e.target.files[0]);v.muted=true;sa()};
+function sa(){if(!a.src||live())return;a.volume=v.volume;a.playbackRate=v.playbackRate;if(Math.abs(a.currentTime-v.currentTime)>.25)a.currentTime=v.currentTime;v.paused?a.pause():a.play().catch(()=>{})}
+['play','pause','seeked','ratechange','volumechange'].forEach(e=>v.addEventListener(e,sa));setInterval(sa,1000);
+</script></body></html>
